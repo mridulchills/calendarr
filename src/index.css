@@ -93,26 +93,27 @@ body {
    SPIRAL RINGS
    ═══════════════════════════════════════ */
 .rings-bar {
-  position: relative; height: 20px;
-  background: #111;
-  display: flex; align-items: center; justify-content: center;
-  gap: 8px; padding: 0 12px;
+  position: relative; height: 22px;
+  background: #1c1c1c;
+  border-bottom: 2px solid #000;
+  display: flex; align-items: center; justify-content: space-evenly;
+  padding: 0 20px;
   z-index: 12;
   border-radius: 6px 6px 0 0;
   overflow: visible;
 }
 .ring {
-  width: 13px; height: 24px;
-  border-radius: 50%;
-  border: 2px solid #999;
-  background: linear-gradient(135deg, #c8c8c8, #888, #c8c8c8);
-  box-shadow: 0 1px 2px rgba(0,0,0,0.3);
+  width: 6px; height: 28px;
+  border-radius: 6px;
+  background: linear-gradient(to right, #888 0%, #dfdfdf 35%, #fff 50%, #b3b3b3 80%, #555 100%);
+  box-shadow: 0 3px 5px rgba(0,0,0,0.6), inset 0 1px 2px rgba(255,255,255,0.9);
+  border: 1px solid rgba(0,0,0,0.4);
   flex-shrink: 0;
   position: relative;
+  transform: translateY(-2px);
 }
 .ring::after {
-  content: ''; position: absolute; inset: 3px;
-  border-radius: 50%; background: #111;
+  content: none;
 }
 
 /* ═══════════════════════════════════════
@@ -425,6 +426,6 @@ body {
   .grid-area { padding: 4px 12px 12px; }
   .month-title { font-size: clamp(32px, 9vw, 48px); left: 16px; }
   .date-num { width: 28px; height: 28px; font-size: 13px; }
-  .ring { width: 10px; height: 20px; }
-  .rings-bar { height: 16px; gap: 5px; }
+  .ring { width: 4px; height: 24px; border-radius: 4px; }
+  .rings-bar { height: 18px; padding: 0 14px; }
 }

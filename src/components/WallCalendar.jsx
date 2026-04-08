@@ -28,6 +28,13 @@ export default function WallCalendar() {
 
   // Framer Motion values for the flip
   const flipRotateX = useMotionValue(0);
+  
+  // ── Page bending effects ──
+  // Simulates paper flexibility by twisting dynamically at the midpoint
+  const flipRotateZ = useTransform(flipRotateX, [0, 90, 180], [0, -3.5, 0]); 
+  const flipRotateY = useTransform(flipRotateX, [0, 90, 180], [0, 4, 0]);  
+  const flipSkewX = useTransform(flipRotateX, [0, 90, 180], [0, 1.5, 0]);  
+  
   // Shadow driven from rotation: peaks at 90 deg (page perpendicular)
   const shadowOpacity = useTransform(flipRotateX, [0, 90, 180], [0, 0.35, 0]);
   const shadowScaleX = useTransform(flipRotateX, [0, 90, 180], [1, 1.4, 1]);
@@ -479,6 +486,9 @@ export default function WallCalendar() {
             <motion.div
               style={{
                 rotateX: flipRotateX,
+                rotateZ: flipRotateZ,
+                rotateY: flipRotateY,
+                skewX: flipSkewX,
                 transformOrigin: 'top center',
                 transformStyle: 'preserve-3d',
                 position: 'absolute',
