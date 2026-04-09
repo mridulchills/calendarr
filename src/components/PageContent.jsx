@@ -36,9 +36,12 @@ const PageContent = memo(function PageContent({
       {/* ── Hero image with gradient bleed ── */}
       <div className="page-hero">
         {imageUrl ? (
-          <div
+          <img
+            crossOrigin="anonymous"
+            src={imageUrl}
+            alt="Hero"
             className="page-hero-bg"
-            style={{ backgroundImage: `url(${imageUrl})` }}
+            style={{ objectFit: 'cover', width: '100%', height: '100%' }}
           />
         ) : (
           <div className="page-hero-bg" style={{ background: accent }} />

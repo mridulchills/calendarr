@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
-import { motion, useMotionValue, useTransform, animate } from 'framer-motion';
+import { useMotionValue, animate } from 'framer-motion';
 import PageContent from './PageContent';
 import NotesPanel from './NotesPanel';
 import CRUDNoteCard from './CRUDNoteCard';
@@ -8,6 +8,28 @@ import { useNotes } from '../hooks/useNotes';
 import { MONTH_ACCENTS, NOTE_COLORS } from '../utils/constants';
 import { getCalendarDays, dateToKey, isSameDay, isDateInRange, orderDates } from '../utils/dateHelpers';
 import { fetchMonthImages } from '../utils/pexelsApi';
+import { captureTexture, setupThreeScene } from '../utils/threeFlip';
+
+// Fallback custom tween to bypass framer-motion quirks
+const runTween = (duration, updateFn, easeFn) => {
+  return new Promise(resolve => {
+    const start = performance.now();
+    const tick = (now) => {
+      let t = (now - start) / (duration * 1000);
+      if (t >= 1) {
+        updateFn(easeFn(1));
+        resolve();
+        return;
+      }
+      updateFn(easeFn(t));
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+};
+
+// Cubic bezier approximation
+const easeInOutCubic = t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 
 export default function WallCalendar() {
   const now = new Date();
@@ -21,23 +43,11 @@ export default function WallCalendar() {
 
   // ─── Flip state ───
   const [isFlipping, setIsFlipping] = useState(false);
-  const [flipDir, setFlipDir] = useState(null);
-  const [flipPage, setFlipPage] = useState(null); // { month, year, days, imageUrl, accent }
+  const [hiddenFlipPage, setHiddenFlipPage] = useState(null); 
   const [settling, setSettling] = useState(false);
   const isAnimatingRef = useRef(false);
-
-  // Framer Motion values for the flip
-  const flipRotateX = useMotionValue(0);
   
-  // ── Page bending effects ──
-  // Simulates paper flexibility by twisting dynamically at the midpoint
-  const flipRotateZ = useTransform(flipRotateX, [0, 90, 180], [0, -3.5, 0]); 
-  const flipRotateY = useTransform(flipRotateX, [0, 90, 180], [0, 4, 0]);  
-  const flipSkewX = useTransform(flipRotateX, [0, 90, 180], [0, 1.5, 0]);  
-  
-  // Shadow driven from rotation: peaks at 90 deg (page perpendicular)
-  const shadowOpacity = useTransform(flipRotateX, [0, 90, 180], [0, 0.35, 0]);
-  const shadowScaleX = useTransform(flipRotateX, [0, 90, 180], [1, 1.4, 1]);
+  const hiddenPageRef = useRef(null);
 
   // ─── Interaction state ───
   const [crudDate, setCrudDate] = useState(null);
@@ -112,7 +122,7 @@ export default function WallCalendar() {
   }, [days, getNoteDots]);
 
   // ═══════════════════════════════════════
-  // FLIP LOGIC — Framer Motion single-page
+  // FLIP LOGIC — Three.js Integration
   // ═══════════════════════════════════════
   const prefersReduced = typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
 
@@ -121,105 +131,141 @@ export default function WallCalendar() {
     isAnimatingRef.current = true;
     setCrudDate(null);
     setHoveredDate(null);
-    // Clear selection — stale notes panel must not persist across months
     setSelectedDate(null);
     setRangeStart(null);
     setRangeEnd(null);
 
-    const nextM = (month + 1) % 12;
-    const nextY = month === 11 ? year + 1 : year;
+    try {
+      const nextM = (month + 1) % 12;
+      const nextY = month === 11 ? year + 1 : year;
 
-    // Capture current month for the flipping page
-    setFlipPage({
-      month, year,
-      days: getCalendarDays(year, month),
-      imageUrl: currentImageUrl,
-      accent: MONTH_ACCENTS[month],
-    });
+      if (prefersReduced || !gridAreaRef.current) {
+        setIsFlipping(true);
+        await new Promise(r => setTimeout(r, 200));
+        setMonth(nextM);
+        setYear(nextY);
+        setIsFlipping(false);
+        return;
+      }
 
-    // Update underlying page to next month immediately (will be revealed)
-    setMonth(nextM);
-    setYear(nextY);
+      console.log('doFlipForward: Starting texture capture for current month...');
+      // Capture the current month (facing user)
+      const currentTexture = await captureTexture(gridAreaRef.current);
+      console.log('doFlipForward: Texture captured successfully.');
+      const rect = gridAreaRef.current.getBoundingClientRect();
+      const threeContainer = gridAreaRef.current.parentElement; // .flip-perspective div
 
-    // Set up flip: page starts flat (0) and lifts TOWARD viewer, over the binding (+180)
-    flipRotateX.set(0);
-    setFlipDir('forward');
-    setIsFlipping(true);
+      setIsFlipping(true);
 
-    // Wait one frame for React to render
-    await new Promise(r => requestAnimationFrame(r));
+      console.log('doFlipForward: Setting up Three.js scene...');
+      // Mount Three.js cover instantly (progress 0) BEFORE updating React state
+      const sceneHandle = setupThreeScene(threeContainer, currentTexture, null, rect.width, rect.height);
+      sceneHandle.render(0, 'forward');
 
-    if (prefersReduced) {
-      await new Promise(r => setTimeout(r, 200));
-    } else {
-      // Forward: 0 → +180 — bottom lifts toward viewer, arcs over the top binding
-      await animate(flipRotateX, 180, {
-        duration: 0.55,
-        ease: [0.4, 0.0, 0.15, 1.0], // slow lift, fast arc, clean land
-      });
+      console.log('doFlipForward: Scene setup complete. Running animation...');
+
+      // Now safe to update underlying React DOM to next month
+      setMonth(nextM);
+      setYear(nextY);
+
+      await runTween(0.55, (v) => {
+        sceneHandle.render(v, 'forward');
+      }, easeInOutCubic);
+
+      sceneHandle.teardown();
+      setIsFlipping(false);
+
+      setSettling(true);
+      setTimeout(() => { setSettling(false); }, 220);
+
+    } catch (err) {
+      console.warn('Flip animation failed (forward), falling back:', err);
+      const nextM = (month + 1) % 12;
+      const nextY = month === 11 ? year + 1 : year;
+      setMonth(nextM);
+      setYear(nextY);
+      setIsFlipping(false);
+    } finally {
+      isAnimatingRef.current = false;
     }
-
-    // Clean up
-    setIsFlipping(false);
-    setFlipPage(null);
-    setFlipDir(null);
-    flipRotateX.set(0);
-
-    // Settle
-    setSettling(true);
-    setTimeout(() => { setSettling(false); isAnimatingRef.current = false; }, 220);
-  }, [month, year, currentImageUrl, flipRotateX, prefersReduced]);
+  }, [month, year, prefersReduced]);
 
   const doFlipBackward = useCallback(async () => {
     if (isAnimatingRef.current) return;
     isAnimatingRef.current = true;
     setCrudDate(null);
     setHoveredDate(null);
-    // Clear selection
     setSelectedDate(null);
     setRangeStart(null);
     setRangeEnd(null);
 
-    const prevM = (month + 11) % 12;
-    const prevY = month === 0 ? year - 1 : year;
+    try {
+      const prevM = (month + 11) % 12;
+      const prevY = month === 0 ? year - 1 : year;
 
-    // Compute incoming (previous) month for the flipping page
-    setFlipPage({
-      month: prevM, year: prevY,
-      days: getCalendarDays(prevY, prevM),
-      imageUrl: imageCache[prevM]?.[0]?.url || null,
-      accent: MONTH_ACCENTS[prevM],
-    });
+      if (prefersReduced || !gridAreaRef.current) {
+        setIsFlipping(true);
+        await new Promise(r => setTimeout(r, 200));
+        setMonth(prevM);
+        setYear(prevY);
+        setIsFlipping(false);
+        return;
+      }
 
-    // Incoming page starts at +180 (face-down behind the stack)
-    flipRotateX.set(180);
-    setFlipDir('backward');
-    setIsFlipping(true);
-
-    await new Promise(r => requestAnimationFrame(r));
-
-    if (prefersReduced) {
-      await new Promise(r => setTimeout(r, 200));
-    } else {
-      // Backward: +180 → 0 — page springs off the back pile, over the binding, lands face-up
-      await animate(flipRotateX, 0, {
-        duration: 0.55,
-        ease: [0.6, 0.0, 0.2, 1.0], // slight spring-off energy, smooth landing
+      // Render the previous month in our hidden DOM div and wait for React to mount it
+      setHiddenFlipPage({
+        month: prevM, year: prevY,
+        days: getCalendarDays(prevY, prevM),
+        imageUrl: imageCache[prevM]?.[0]?.url || null,
+        accent: MONTH_ACCENTS[prevM],
       });
+      
+      await new Promise(r => setTimeout(r, 50)); // let React render the hidden div and images load loosely
+
+      if (!hiddenPageRef.current) return;
+
+      console.log('doFlipBackward: Starting texture capture for INCOMING month...');
+      // Capture incoming month texture
+      const incomingTexture = await captureTexture(hiddenPageRef.current);
+      console.log('doFlipBackward: Texture captured successfully.');
+      const rect = gridAreaRef.current.getBoundingClientRect();
+      const threeContainer = gridAreaRef.current.parentElement;
+
+      setIsFlipping(true); // locks interactions
+
+      console.log('doFlipBackward: Setting up Three.js scene...');
+      // Mount ThreeJS matching exact backward start state (face down at Math.PI, showing white back)
+      const sceneHandle = setupThreeScene(threeContainer, incomingTexture, null, rect.width, rect.height);
+      sceneHandle.render(0, 'backward');
+
+      console.log('doFlipBackward: Scene setup complete. Running animation...');
+
+      await runTween(0.55, (v) => {
+        sceneHandle.render(v, 'backward');
+      }, easeInOutCubic);
+
+      sceneHandle.teardown();
+      
+      setHiddenFlipPage(null);
+      setMonth(prevM);
+      setYear(prevY);
+      setIsFlipping(false);
+
+      setSettling(true);
+      setTimeout(() => { setSettling(false); }, 220);
+
+    } catch (err) {
+      console.warn('Flip animation failed (backward), falling back:', err);
+      const prevM = (month + 11) % 12;
+      const prevY = month === 0 ? year - 1 : year;
+      setHiddenFlipPage(null);
+      setMonth(prevM);
+      setYear(prevY);
+      setIsFlipping(false);
+    } finally {
+      isAnimatingRef.current = false;
     }
-
-    // Now swap underlying to previous month
-    setMonth(prevM);
-    setYear(prevY);
-
-    setIsFlipping(false);
-    setFlipPage(null);
-    setFlipDir(null);
-    flipRotateX.set(0);
-
-    setSettling(true);
-    setTimeout(() => { setSettling(false); isAnimatingRef.current = false; }, 220);
-  }, [month, year, imageCache, flipRotateX, prefersReduced]);
+  }, [month, year, imageCache, prefersReduced]);
 
   const navigateMonth = useCallback((dir) => {
     if (dir > 0) doFlipForward();
@@ -481,29 +527,16 @@ export default function WallCalendar() {
             />
           </div>
 
-          {/* ── Flipping page — Framer Motion ── */}
-          {isFlipping && flipPage && (
-            <motion.div
-              style={{
-                rotateX: flipRotateX,
-                rotateZ: flipRotateZ,
-                rotateY: flipRotateY,
-                skewX: flipSkewX,
-                transformOrigin: 'top center',
-                transformStyle: 'preserve-3d',
-                position: 'absolute',
-                inset: 0,
-                zIndex: 10,
-              }}
-            >
-              {/* Front face */}
-              <div style={{ backfaceVisibility: 'hidden', position: 'relative' }}>
+          {/* Hidden block for capturing previous month via html2canvas */}
+          {hiddenFlipPage && (
+            <div style={{ position: 'absolute', opacity: 0, pointerEvents: 'none', zIndex: -100 }}>
+              <div ref={hiddenPageRef} style={{ width: gridAreaRef.current?.offsetWidth || 480, background: 'var(--card-bg)', borderRadius: '0 0 6px 6px' }}>
                 <PageContent
-                  month={flipPage.month}
-                  year={flipPage.year}
-                  days={flipPage.days}
-                  imageUrl={flipPage.imageUrl}
-                  accent={flipPage.accent}
+                  month={hiddenFlipPage.month}
+                  year={hiddenFlipPage.year}
+                  days={hiddenFlipPage.days}
+                  imageUrl={hiddenFlipPage.imageUrl}
+                  accent={hiddenFlipPage.accent}
                   today={today}
                   selectedDate={null}
                   rangeStart={null}
@@ -512,27 +545,8 @@ export default function WallCalendar() {
                   isStrip
                 />
               </div>
-              {/* Back face — warm off-white, like real paper back */}
-              <div className="page-back-face" />
-            </motion.div>
+            </div>
           )}
-
-          {/* ── Flip shadow — driven by rotateX motion value ── */}
-          <motion.div
-            style={{
-              position: 'absolute',
-              bottom: 0,
-              left: '10%',
-              right: '10%',
-              height: '20px',
-              background: 'radial-gradient(ellipse, rgba(0,0,0,0.3) 0%, transparent 70%)',
-              filter: 'blur(8px)',
-              opacity: shadowOpacity,
-              scaleX: shadowScaleX,
-              pointerEvents: 'none',
-              zIndex: 5,
-            }}
-          />
 
           {/* Hover tooltip */}
           {hoveredDate && !crudDate && !isFlipping && (
